@@ -1,0 +1,15 @@
+services:
+  nats:
+    build: .
+    container_name: nats-js
+    restart: unless-stopped
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    volumes:
+      - nats-creds:/etc/nats/creds   # creds persist across restarts
+      - nats-data:/data/jetstream
+
+volumes:
+  nats-creds:   # keys/creds survive container rebuilds
+  nats-data:
