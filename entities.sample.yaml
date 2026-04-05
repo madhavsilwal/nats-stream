@@ -1,0 +1,64 @@
+# entities.yaml — sample reference
+#
+# Copy this file to entities.yaml and customize for your setup.
+# The entrypoint parses this file on first boot to create all operators,
+# accounts, users and their permissions.
+#
+# Rules:
+#   - The operator with primary: true is used as the server operator
+#     (its JWT is written to /etc/nats/creds/operator.jwt).
+#   - If no operator has primary: true, the first operator in the list is used.
+#   - Permission values can be a single subject string or a YAML list.
+#     Lists are joined with commas (e.g. "events.>,payment.>").
+#   - If sys: true, a SYS system account is created for that operator.
+
+operators:
+  # ── Primary operator with system account ──
+  - name: my-operator
+    sys: true
+    primary: true
+    accounts:
+      # Account with users that have scalar (single-value) permissions
+      - name: admin-account
+        users:
+          - name: admin
+            allow-pub: ">"
+            allow-sub: ">"
+
+      # Account with users that have list-based permissions
+      - name: app-account
+        users:
+          - name: publisher
+            allow-pub:
+              - "events.>"
+              - "commands.>"
+            deny-sub: ">"
+
+          - name: consumer
+            deny-pub: ">"
+            allow-sub:
+              - "events.>"
+              - "responses.>"
+
+          - name: service
+            allow-pub:
+              - "responses.>"
+              - "health.>"
+            allow-sub:
+              - "commands.>"
+              - "health.>"
+
+  # ── Secondary operator (no primary flag, not the server operator) ──
+  - name: partner-operator
+    sys: false
+    accounts:
+      - name: partner-account
+        users:
+          - name: partner-user
+            allow-pub: "partner.>"
+            allow-sub: "partner.>"
+
+  # ── Operator with no accounts ──
+  - name: future-operator
+    sys: false
+    accounts: []

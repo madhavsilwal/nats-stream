@@ -48,6 +48,8 @@ Volumes survive `docker compose restart` and `docker compose up --build`. Only `
 
 All operators, accounts and users are defined in `entities.yaml`. The entrypoint parses this file at startup using [`yq`](https://github.com/mikefarah/yq).
 
+See [`entities.sample.yaml`](entities.sample.yaml) for a fully commented reference with multiple operators, accounts, permission styles (scalar vs list), and edge cases. Copy it to `entities.yaml` and customize.
+
 ### Schema
 
 ```yaml
@@ -68,39 +70,6 @@ operators:
 - **`primary`**: The operator with `primary: true` has its JWT written to `/etc/nats/creds/operator.jwt` (the file referenced by `nats.conf`). If no operator has `primary: true`, the **first operator in the list** is used as primary.
 - **`sys`**: When `true`, a `SYS` system account is created for that operator.
 - Permission values can be a single subject string or a YAML list. Lists are joined with commas (e.g. `events.>,payment.>`).
-
-### Example
-
-```yaml
-operators:
-  - name: madhav
-    sys: true
-    primary: true
-    accounts:
-      - name: debug-users
-        users:
-          - name: admin
-            allow-pub: ">"
-            allow-sub: ">"
-          - name: publisher
-            allow-pub:
-              - "events.>"
-              - "payment.>"
-            deny-sub: ">"
-          - name: consumer
-            deny-pub: ">"
-            allow-sub:
-              - "events.>"
-              - "payment.>"
-      - name: test-users
-        users:
-          - name: tester
-            allow-pub: "test.>"
-            allow-sub: "test.>"
-  - name: silwal
-    sys: false
-    accounts: []
-```
 
 ---
 
