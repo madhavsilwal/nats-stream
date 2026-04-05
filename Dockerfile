@@ -3,7 +3,7 @@ FROM nats:2.12-alpine AS base
 
 FROM golang:1.26-alpine AS builder
 RUN apk add --no-cache git \
-    && go install github.com/nats-io/nsc/v2@latest
+    && go install github.com/nats-io/nsc/v2@v2.12.0
 
 FROM base
 COPY --from=builder /go/bin/nsc /usr/local/bin/nsc
