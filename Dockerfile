@@ -11,5 +11,5 @@ COPY nats.conf       /etc/nats/nats.conf
 COPY entrypoint.sh   /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-EXPOSE 4222 6222 8222 7422
+EXPOSE 4222 6222 8222
 ENTRYPOINT ["/entrypoint.sh"]

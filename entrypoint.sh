@@ -9,7 +9,7 @@ USERS_DIR=$CREDS_DIR/users
 
 export NSC_HOME NKEYS_PATH
 
-if [ ! -f "$CREDS_DIR/.initialized" ]; then
+if [ ! -f "$CREDS_DIR/operator.jwt" ]; then
   echo "[entrypoint] First boot — generating operator, accounts, users..."
 
   mkdir -p "$NSC_HOME" "$NKEYS_PATH" "$RESOLVER_DIR" "$USERS_DIR"
@@ -37,7 +37,12 @@ if [ ! -f "$CREDS_DIR/.initialized" ]; then
     [ "$mod" -eq 2 ] && payload="${payload}=="
     [ "$mod" -eq 3 ] && payload="${payload}="
     sub=$(printf '%s' "$payload" | base64 -d 2>/dev/null | grep -o '"sub":"[^"]*"' | cut -d'"' -f4)
-    [ -n "$sub" ] && printf '%s\n' "$raw" > "${RESOLVER_DIR}/${sub}.jwt"
+    if [ -n "$sub" ]; then
+      printf '%s\n' "$raw" > "${RESOLVER_DIR}/${sub}.jwt"
+    else
+      echo "[entrypoint] ERROR: failed to extract account public key for $account" >&2
+      exit 1
+    fi
   done
 
   # Copy creds from where nsc actually put them
@@ -46,7 +51,6 @@ if [ ! -f "$CREDS_DIR/.initialized" ]; then
   cp "$NKEYS_PATH/creds/MyOperator/MyAccount/consumer.creds"  "$USERS_DIR/consumer.creds"
   cp "$NKEYS_PATH/creds/MyOperator/SYS/sys.creds"             "$USERS_DIR/sys.creds"
 
-  touch "$CREDS_DIR/.initialized"
   echo "[entrypoint] Setup complete."
 else
   echo "[entrypoint] Already initialized — skipping setup."
