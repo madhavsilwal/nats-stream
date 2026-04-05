@@ -44,6 +44,7 @@ if [ ! -f "$CREDS_DIR/.initialized" ]; then
   cp "$NKEYS_PATH/creds/MyOperator/MyAccount/admin.creds"     "$USERS_DIR/admin.creds"
   cp "$NKEYS_PATH/creds/MyOperator/MyAccount/publisher.creds" "$USERS_DIR/publisher.creds"
   cp "$NKEYS_PATH/creds/MyOperator/MyAccount/consumer.creds"  "$USERS_DIR/consumer.creds"
+  cp "$NKEYS_PATH/creds/MyOperator/SYS/sys.creds"             "$USERS_DIR/sys.creds"
 
   touch "$CREDS_DIR/.initialized"
   echo "[entrypoint] Setup complete."
