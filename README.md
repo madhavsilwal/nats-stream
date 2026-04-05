@@ -1,18 +1,22 @@
 # NATS JetStream — Operator-Mode Docker Setup
 
-A self-contained NATS server running in **operator mode** with JetStream enabled. All keys, JWTs, and credentials are generated automatically on first boot and persisted in a Docker volume.
+A self-contained NATS server running in **operator mode** with JetStream enabled. All keys, JWTs, and credentials are generated automatically on first boot from `entities.yaml` and persisted in a Docker volume.
 
 ---
 
 ## Architecture
 
+Entities are defined declaratively in `entities.yaml`. On first boot the entrypoint reads this file and creates all operators, accounts and users via `nsc`.
+
 ```
-Operator: MyOperator
-└── Account: SYS          (system account — internal server use only)
-└── Account: MyAccount
-    ├── User: admin        (pub/sub on everything: >)
-    ├── User: publisher    (pub on events.>)
-    └── User: consumer     (sub on events.>, payment.>)
+entities.yaml
+  operators:
+    - name: madhav (primary, sys)
+        accounts:
+          - debug-users → admin, publisher, consumer
+          - test-users  → tester
+    - name: silwal
+        accounts: []
 ```
 
 The server uses the **full JWT resolver** — account JWTs are stored on disk and can be updated live without restarting.
@@ -23,10 +27,11 @@ The server uses the **full JWT resolver** — account JWTs are stored on disk an
 
 | File | Purpose |
 |---|---|
-| `Dockerfile` | Multi-stage build: compiles `nsc` from source, bundles with `nats:2.12-alpine` |
+| `Dockerfile` | Multi-stage build: compiles `nsc` from source, downloads `yq`, bundles with `nats:2.12-alpine` |
 | `docker-compose.yaml` | Runs the container, maps ports, mounts two named volumes |
 | `nats.conf` | Server config: operator JWT path, full resolver dir, JetStream limits |
-| `entrypoint.sh` | First-boot init: creates operator/accounts/users, exports JWTs and creds |
+| `entrypoint.sh` | First-boot init: parses `entities.yaml` via `yq`, creates operators/accounts/users, exports JWTs and creds |
+| `entities.yaml` | Declarative definition of operators, accounts, users and their permissions |
 
 ### Volumes
 
@@ -36,6 +41,66 @@ The server uses the **full JWT resolver** — account JWTs are stored on disk an
 | `nats-data` | `/data/jetstream` | JetStream message store |
 
 Volumes survive `docker compose restart` and `docker compose up --build`. Only `docker compose down -v` wipes them.
+
+---
+
+## entities.yaml
+
+All operators, accounts and users are defined in `entities.yaml`. The entrypoint parses this file at startup using [`yq`](https://github.com/mikefarah/yq).
+
+### Schema
+
+```yaml
+operators:
+  - name: <operator-name>
+    sys: true|false              # create a SYS system account for this operator
+    primary: true|false          # optional — marks this operator as the server's operator
+    accounts:
+      - name: <account-name>
+        users:
+          - name: <user-name>
+            allow-pub: "<subject>" | ["<subject1>", "<subject2>"]
+            deny-pub:  "<subject>" | ["<subject1>", "<subject2>"]
+            allow-sub: "<subject>" | ["<subject1>", "<subject2>"]
+            deny-sub:  "<subject>" | ["<subject1>", "<subject2>"]
+```
+
+- **`primary`**: The operator with `primary: true` has its JWT written to `/etc/nats/creds/operator.jwt` (the file referenced by `nats.conf`). If no operator has `primary: true`, the **first operator in the list** is used as primary.
+- **`sys`**: When `true`, a `SYS` system account is created for that operator.
+- Permission values can be a single subject string or a YAML list. Lists are joined with commas (e.g. `events.>,payment.>`).
+
+### Example
+
+```yaml
+operators:
+  - name: madhav
+    sys: true
+    primary: true
+    accounts:
+      - name: debug-users
+        users:
+          - name: admin
+            allow-pub: ">"
+            allow-sub: ">"
+          - name: publisher
+            allow-pub:
+              - "events.>"
+              - "payment.>"
+            deny-sub: ">"
+          - name: consumer
+            deny-pub: ">"
+            allow-sub:
+              - "events.>"
+              - "payment.>"
+      - name: test-users
+        users:
+          - name: tester
+            allow-pub: "test.>"
+            allow-sub: "test.>"
+  - name: silwal
+    sys: false
+    accounts: []
+```
 
 ---
 
@@ -54,11 +119,12 @@ docker compose up -d --build
 
 On first boot the entrypoint:
 
-1. Creates operator `MyOperator` with a built-in `SYS` system account
-2. Creates account `MyAccount` with three users and their permission sets
-3. Writes the operator JWT to `/etc/nats/creds/operator.jwt`
-4. Writes account JWTs to `/etc/nats/creds/resolver/` named by account public key (required by the full resolver)
-5. Copies user creds to `/etc/nats/creds/users/`
+1. Parses `entities.yaml` using `yq`
+2. Creates all operators (with `--sys` where specified)
+3. Creates all accounts and users with their permission sets
+4. Writes the **primary** operator JWT to `/etc/nats/creds/operator.jwt`
+5. Writes account JWTs to `/etc/nats/creds/resolver/` named by account public key (required by the full resolver)
+6. Copies user creds to `/etc/nats/creds/users/` with collision-safe names
 
 Check the logs:
 
@@ -74,6 +140,8 @@ Expected final lines:
 ```
 
 Subsequent restarts skip init and print `Already initialized — skipping setup.`
+
+> **Changing entities.yaml:** If the creds volume already contains `operator.jwt`, the entrypoint will skip initialization. To apply changes to `entities.yaml`, either reset volumes (`docker compose down -v`) or set `FORCE_INIT=true` (see [Force Re-initialization](#force-re-initialization)).
 
 ---
 
@@ -106,24 +174,35 @@ http_port: 8222
 
 The `full` resolver means the server holds all account JWTs locally and can accept live updates via the system account API (`nsc push`).
 
-### User permissions
-
-| User | Publish | Subscribe |
-|---|---|---|
-| `admin` | `>` | `>` |
-| `publisher` | `events.>` | denied (`>`) |
-| `consumer` | denied (`>`) | `events.>`, `payment.>` |
-
 ---
 
 ## Obtaining Credentials
 
-Copy creds from the container to your local machine:
+Credentials are stored in `/etc/nats/creds/users/` with naming convention:
+
+```
+<operator>-<account>-<user>.creds
+```
+
+For the example `entities.yaml` above:
 
 ```sh
-docker cp nats-js:/etc/nats/creds/users/admin.creds     ./admin.creds
-docker cp nats-js:/etc/nats/creds/users/publisher.creds ./publisher.creds
-docker cp nats-js:/etc/nats/creds/users/consumer.creds  ./consumer.creds
+docker cp nats-js:/etc/nats/creds/users/madhav-debug-users-admin.creds     ./madhav-debug-users-admin.creds
+docker cp nats-js:/etc/nats/creds/users/madhav-debug-users-publisher.creds ./madhav-debug-users-publisher.creds
+docker cp nats-js:/etc/nats/creds/users/madhav-debug-users-consumer.creds  ./madhav-debug-users-consumer.creds
+docker cp nats-js:/etc/nats/creds/users/madhav-test-users-tester.creds     ./madhav-test-users-tester.creds
+```
+
+The primary operator's system account creds are also available with a short alias:
+
+```sh
+docker cp nats-js:/etc/nats/creds/users/sys.creds ./sys.creds
+```
+
+All operator sys creds are available at:
+
+```sh
+docker cp nats-js:/etc/nats/creds/users/<operator>-SYS-sys.creds ./<operator>-sys.creds
 ```
 
 ---
@@ -135,22 +214,29 @@ All commands connect to `nats://localhost:4222`.
 ### Subscribe (consumer)
 
 ```sh
-nats sub --creds consumer.creds 'payment.>' -s nats://localhost:4222
-nats sub --creds consumer.creds 'events.>'  -s nats://localhost:4222
+nats sub --creds madhav-debug-users-consumer.creds 'payment.>' -s nats://localhost:4222
+nats sub --creds madhav-debug-users-consumer.creds 'events.>'  -s nats://localhost:4222
 ```
 
 ### Publish (publisher)
 
 ```sh
-nats pub --creds publisher.creds events.order.created '{"id":1}' -s nats://localhost:4222
-nats pub --creds publisher.creds events.user.signup   '{"id":2}' -s nats://localhost:4222
+nats pub --creds madhav-debug-users-publisher.creds events.order.created '{"id":1}' -s nats://localhost:4222
+nats pub --creds madhav-debug-users-publisher.creds events.user.signup   '{"id":2}' -s nats://localhost:4222
 ```
 
 ### Admin (full access)
 
 ```sh
-nats sub --creds admin.creds '>' -s nats://localhost:4222
-nats pub --creds admin.creds any.subject 'hello' -s nats://localhost:4222
+nats sub --creds madhav-debug-users-admin.creds '>' -s nats://localhost:4222
+nats pub --creds madhav-debug-users-admin.creds any.subject 'hello' -s nats://localhost:4222
+```
+
+### Test account user
+
+```sh
+nats sub --creds madhav-test-users-tester.creds 'test.>' -s nats://localhost:4222
+nats pub --creds madhav-test-users-tester.creds test.ping 'pong' -s nats://localhost:4222
 ```
 
 ### Monitoring (HTTP)
@@ -172,8 +258,8 @@ Revoking a user **does not require a restart**. The updated account JWT is pushe
 ```sh
 docker exec nats-js sh -c '
   export NSC_HOME=/etc/nats/nsc NKEYS_PATH=/etc/nats/nkeys
-  nsc revocations add-user -a MyAccount -n consumer
-  nsc push -a MyAccount \
+  nsc revocations add-user -a debug-users -n consumer
+  nsc push -a debug-users \
     --account-jwt-server-url nats://localhost:4222 \
     --system-account SYS \
     --system-user sys
@@ -185,7 +271,7 @@ The user's existing connection is dropped and any reconnect attempt will receive
 ### Verify revocation
 
 ```sh
-nats sub --creds consumer.creds 'payment.>' -s nats://localhost:4222
+nats sub --creds madhav-debug-users-consumer.creds 'payment.>' -s nats://localhost:4222
 # nats: error: nats: Authorization Violation
 ```
 
@@ -194,7 +280,7 @@ nats sub --creds consumer.creds 'payment.>' -s nats://localhost:4222
 ```sh
 docker exec nats-js sh -c '
   export NSC_HOME=/etc/nats/nsc NKEYS_PATH=/etc/nats/nkeys
-  nsc revocations list-users -a MyAccount
+  nsc revocations list-users -a debug-users
 '
 ```
 
@@ -207,8 +293,8 @@ Remove the revocation and push the updated account JWT — no restart needed.
 ```sh
 docker exec nats-js sh -c '
   export NSC_HOME=/etc/nats/nsc NKEYS_PATH=/etc/nats/nkeys
-  nsc revocations delete-user -a MyAccount -n consumer
-  nsc push -a MyAccount \
+  nsc revocations delete-user -a debug-users -n consumer
+  nsc push -a debug-users \
     --account-jwt-server-url nats://localhost:4222 \
     --system-account SYS \
     --system-user sys
@@ -220,7 +306,7 @@ The existing `.creds` file on disk is unchanged — access is controlled entirel
 ### Verify access is restored
 
 ```sh
-nats sub --creds consumer.creds 'payment.>' -s nats://localhost:4222
+nats sub --creds madhav-debug-users-consumer.creds 'payment.>' -s nats://localhost:4222
 # 00:44:49 Subscribing on payment.>
 ```
 
@@ -236,6 +322,19 @@ docker compose up -d --build
 ```
 
 > All previously issued `.creds` files become invalid after a reset because new keys are generated.
+
+### Force Re-initialization
+
+If you want to re-run the entrypoint initialization without destroying the JetStream data volume, set `FORCE_INIT=true`:
+
+```sh
+docker compose down
+FORCE_INIT=true docker compose up -d
+```
+
+This re-parses `entities.yaml` and recreates all operators, accounts and users. Existing JetStream message data is preserved.
+
+> **Warning:** Force re-initialization generates new keys, so all previously issued `.creds` files become invalid.
 
 ---
 
