@@ -5,7 +5,7 @@ services:
     restart: unless-stopped
     ports:
       - "4222:4222"
-      - "8222:8222"
+      - "127.0.0.1:8222:8222"
     volumes:
       - nats-creds:/etc/nats/creds   # creds persist across restarts
       - nats-data:/data/jetstream
