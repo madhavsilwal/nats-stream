@@ -1,2 +1,3 @@
 *.creds
 *.nkey
+creds.yaml
