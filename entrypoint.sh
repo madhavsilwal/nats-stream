@@ -100,8 +100,16 @@ if [ ! -f "$CREDS_DIR/operator.jwt" ] || [ "${FORCE_INIT}" = "true" ]; then
     j=0
     while [ "$j" -lt "$n_accounts" ]; do
       acc_name=$(yq e ".operators[$i].accounts[$j].name" "$ENTITIES")
+      acc_js=$(yq e ".operators[$i].accounts[$j].jetstream" "$ENTITIES")
       echo "[entrypoint]   Creating account: $acc_name"
       nsc add account -n "$acc_name"
+
+      # Enable JetStream for this account if flagged (--js-enable is exclusive of other js flags)
+      if [ "$acc_js" = "true" ]; then
+        echo "[entrypoint]     Enabling JetStream for account: $acc_name"
+        nsc edit account -n "$acc_name" --js-enable 1
+        nsc edit account -n "$acc_name" --js-tier 1 --js-mem-storage 1g --js-disk-storage 10g
+      fi
 
       # Create users for this account
       n_users=$(yq e ".operators[$i].accounts[$j].users | length" "$ENTITIES")
@@ -111,21 +119,15 @@ if [ ! -f "$CREDS_DIR/operator.jwt" ] || [ "${FORCE_INIT}" = "true" ]; then
         echo "[entrypoint]     Creating user: $user_name"
         nsc add user -a "$acc_name" -n "$user_name"
 
-        # Build permission flags
-        flags=""
+        # Apply permissions directly (no eval) to avoid shell expansion of $ in values like $JS.API.>
         for perm_key in allow-pub deny-pub allow-sub deny-sub; do
           perm_path=".operators[$i].accounts[$j].users[$k].${perm_key}"
           perm_val=$(get_perm "$perm_path")
           if [ -n "$perm_val" ] && [ "$perm_val" != "null" ]; then
-            flags="$flags --${perm_key} \"${perm_val}\""
+            echo "[entrypoint]       Setting --${perm_key} \"${perm_val}\""
+            nsc edit user -a "$acc_name" -n "$user_name" --"${perm_key}" "$perm_val"
           fi
         done
-
-        # Apply permissions if any were specified
-        if [ -n "$flags" ]; then
-          echo "[entrypoint]       Setting permissions:$flags"
-          eval nsc edit user -a "$acc_name" -n "$user_name" $flags
-        fi
 
         k=$((k + 1))
       done

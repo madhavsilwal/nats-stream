@@ -59,6 +59,7 @@ operators:
     primary: true|false          # optional — marks this operator as the server's operator
     accounts:
       - name: <account-name>
+        jetstream: true|false    # optional — enable JetStream for this account (default: false)
         users:
           - name: <user-name>
             allow-pub: "<subject>" | ["<subject1>", "<subject2>"]
@@ -69,7 +70,8 @@ operators:
 
 - **`primary`**: The operator with `primary: true` has its JWT written to `/etc/nats/creds/operator.jwt` (the file referenced by `nats.conf`). If no operator has `primary: true`, the **first operator in the list** is used as primary.
 - **`sys`**: When `true`, a `SYS` system account is created for that operator.
-- Permission values can be a single subject string or a YAML list. Lists are joined with commas (e.g. `events.>,payment.>`).
+- **`jetstream`**: When `true` on an account, JetStream is enabled for that account with `--js-enable 1`, tier 1, 1 GB memory storage, and 10 GB disk storage.
+- Permission values can be a single subject string or a YAML list. Lists are joined with commas (e.g. `events.>,payment.>`). Subjects containing `$` (e.g. `$JS.API.>`) are supported.
 
 ---
 

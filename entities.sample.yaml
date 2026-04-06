@@ -20,6 +20,7 @@ operators:
     accounts:
       # Account with users that have scalar (single-value) permissions
       - name: admin-account
+        jetstream: true
         users:
           - name: admin
             allow-pub: ">"
